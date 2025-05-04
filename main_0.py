@@ -1196,7 +1196,7 @@ class MainWindow(QMainWindow):
         button_layout = QHBoxLayout()
         add_tab_button = QPushButton("+")
         add_tab_button.setToolTip("Add New Note")
-        add_tab_button.setFixedSize(25, 25)
+        add_tab_button.setFixedSize(40, 25)
         add_tab_button.clicked.connect(lambda: self.add_new_notepad_tab())
         button_layout.addWidget(add_tab_button)
         button_layout.addStretch()
