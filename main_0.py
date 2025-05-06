@@ -42,8 +42,8 @@ CRITICAL_PROCESSES = [
     "wininit.exe", "services.exe", "lsass.exe", "winlogon.exe",
     "explorer.exe"
 ]
-SETTINGS_ORG = "Manus"
-SETTINGS_APP = "ManusAssistant"
+SETTINGS_ORG = "SideBar"
+SETTINGS_APP = "SideBarAssistant"
 SIDEBAR_WIDTH = 400
 DEFAULT_P2P_PORT = 61101
 SALT_SIZE = 16
@@ -1026,7 +1026,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Manus Assistant - P2P")
+        self.setWindowTitle("SideBar Assistant - P2P")
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint)
 
         self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
@@ -1390,7 +1390,7 @@ class MainWindow(QMainWindow):
         painter.end()
         icon = QIcon(pixmap)
         self.tray_icon.setIcon(icon)
-        self.tray_icon.setToolTip("Manus Assistant - P2P")
+        self.tray_icon.setToolTip("SideBar Assistant - P2P")
         tray_menu = QMenu()
         show_action = QAction("Show", self, triggered=self.show_window)
         hide_action = QAction("Hide", self, triggered=self.hide_window)
