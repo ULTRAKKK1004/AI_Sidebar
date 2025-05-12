@@ -22,13 +22,22 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 import validators
 
+# 마크다운 지원을 위한 라이브러리 추가
+import markdown
+from markdownify import markdownify as md
+import markdown.extensions.fenced_code
+import markdown.extensions.tables
+import markdown.extensions.nl2br
+import markdown.extensions.codehilite
+from markdown.extensions.toc import TocExtension
+
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QTabWidget, QLabel,
     QTextEdit, QListWidget, QPushButton, QLineEdit, QHBoxLayout, QSplitter,
     QListWidgetItem, QMessageBox, QInputDialog, QFileDialog, QAbstractItemView,
     QSystemTrayIcon, QMenu, QDialog, QFormLayout, QDialogButtonBox,
     QGroupBox, QTabBar, QCheckBox, QComboBox, QPlainTextEdit, QProgressBar,
-    QToolButton, QSizePolicy
+    QToolButton, QSizePolicy, QTextBrowser
 )
 from PySide6.QtCore import (
     Qt, QTimer, QSettings, QSize, QMimeData, QDir, QStandardPaths, QRect,
@@ -38,7 +47,8 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QClipboard, QPixmap, QImage, QAction, QIcon, QGuiApplication, QCursor,
     QShortcut, QKeySequence, QScreen, QCloseEvent, QTextCursor, QPainter,
-    QDrag, QDropEvent, QDragEnterEvent
+    QDrag, QDropEvent, QDragEnterEvent, QFont, QFontDatabase, QSyntaxHighlighter,
+    QTextCharFormat, QColor
 )
 
 import platform
@@ -91,6 +101,277 @@ def setup_logging():
         print(f"Error setting up file logging: {e}")
 
 setup_logging()
+
+# --- Markdown Highlighter Class ---
+class MarkdownHighlighter(QSyntaxHighlighter):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.highlighting_rules = []
+        
+        # Headers
+        header_format = QTextCharFormat()
+        header_format.setFontWeight(QFont.Bold)
+        header_format.setForeground(QColor("#0066CC"))
+        self.highlighting_rules.append(("^#\\s+.+$", header_format))
+        self.highlighting_rules.append(("^##\\s+.+$", header_format))
+        self.highlighting_rules.append(("^###\\s+.+$", header_format))
+        self.highlighting_rules.append(("^####\\s+.+$", header_format))
+        self.highlighting_rules.append(("^#####\\s+.+$", header_format))
+        self.highlighting_rules.append(("^######\\s+.+$", header_format))
+        
+        # Bold
+        bold_format = QTextCharFormat()
+        bold_format.setFontWeight(QFont.Bold)
+        self.highlighting_rules.append(("\\*\\*[^\\*]+\\*\\*", bold_format))
+        self.highlighting_rules.append(("__[^_]+__", bold_format))
+        
+        # Italic
+        italic_format = QTextCharFormat()
+        italic_format.setFontItalic(True)
+        self.highlighting_rules.append(("\\*[^\\*]+\\*", italic_format))
+        self.highlighting_rules.append(("_[^_]+_", italic_format))
+        
+        # Code
+        code_format = QTextCharFormat()
+        code_format.setFontFamily("Courier New")
+        code_format.setBackground(QColor("#F0F0F0"))
+        self.highlighting_rules.append(("`[^`]+`", code_format))
+        
+        # Links
+        link_format = QTextCharFormat()
+        link_format.setForeground(QColor("#0000FF"))
+        link_format.setFontUnderline(True)
+        self.highlighting_rules.append(("\\[.+\\]\\(.+\\)", link_format))
+        
+        # Lists
+        list_format = QTextCharFormat()
+        list_format.setForeground(QColor("#990000"))
+        self.highlighting_rules.append(("^\\s*[-*+]\\s+.+$", list_format))
+        self.highlighting_rules.append(("^\\s*\\d+\\.\\s+.+$", list_format))
+        
+        # Block quotes
+        quote_format = QTextCharFormat()
+        quote_format.setForeground(QColor("#808080"))
+        quote_format.setFontItalic(True)
+        self.highlighting_rules.append(("^>\\s+.+$", quote_format))
+        
+        # Code blocks
+        code_block_format = QTextCharFormat()
+        code_block_format.setFontFamily("Courier New")
+        code_block_format.setBackground(QColor("#F5F5F5"))
+        self.code_block_start = re.compile("^```.*$")
+        self.code_block_end = re.compile("^```$")
+        self.in_code_block = False
+        self.code_block_format = code_block_format
+
+    def highlightBlock(self, text):
+        # 코드 블록 처리
+        if self.in_code_block:
+            self.setFormat(0, len(text), self.code_block_format)
+            if self.code_block_end.match(text):
+                self.in_code_block = False
+            return
+        
+        if self.code_block_start.match(text):
+            self.setFormat(0, len(text), self.code_block_format)
+            self.in_code_block = True
+            return
+        
+        # 다른 마크다운 문법 처리
+        for pattern, format in self.highlighting_rules:
+            expression = re.compile(pattern)
+            matches = expression.finditer(text)
+            for match in matches:
+                start = match.start()
+                length = match.end() - match.start()
+                self.setFormat(start, length, format)
+
+# --- 마크다운 노트 에디터 ---
+class MarkdownEditor(QWidget):
+    text_changed_signal = Signal()
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        # 에디터와 미리보기 전환 툴바
+        toolbar = QHBoxLayout()
+        
+        self.edit_mode_btn = QPushButton("Editor")
+        self.edit_mode_btn.setCheckable(True)
+        self.edit_mode_btn.setChecked(True)
+        
+        self.preview_mode_btn = QPushButton("Preview")
+        self.preview_mode_btn.setCheckable(True)
+        
+        # 버튼 그룹 관리
+        self.edit_mode_btn.clicked.connect(lambda: self.set_mode("edit"))
+        self.preview_mode_btn.clicked.connect(lambda: self.set_mode("preview"))
+        
+        toolbar.addWidget(self.edit_mode_btn)
+        toolbar.addWidget(self.preview_mode_btn)
+        toolbar.addStretch()
+        
+        # 마크다운 형식 도구 버튼 추가
+        self.bold_btn = QToolButton()
+        self.bold_btn.setText("B")
+        self.bold_btn.setToolTip("Bold")
+        self.bold_btn.clicked.connect(lambda: self.insert_markdown_format("**", "**"))
+        
+        self.italic_btn = QToolButton()
+        self.italic_btn.setText("I")
+        self.italic_btn.setToolTip("Italic")
+        self.italic_btn.clicked.connect(lambda: self.insert_markdown_format("*", "*"))
+        
+        self.code_btn = QToolButton()
+        self.code_btn.setText("Code")
+        self.code_btn.setToolTip("Inline Code")
+        self.code_btn.clicked.connect(lambda: self.insert_markdown_format("`", "`"))
+        
+        self.link_btn = QToolButton()
+        self.link_btn.setText("Link")
+        self.link_btn.setToolTip("Insert Link")
+        self.link_btn.clicked.connect(self.insert_link)
+        
+        self.image_btn = QToolButton()
+        self.image_btn.setText("Image")
+        self.image_btn.setToolTip("Insert Image")
+        self.image_btn.clicked.connect(self.insert_image)
+        
+        self.header_btn = QToolButton()
+        self.header_btn.setText("H")
+        self.header_btn.setToolTip("Insert Header")
+        self.header_btn.clicked.connect(lambda: self.insert_markdown_format("# ", ""))
+        
+        toolbar.addWidget(self.bold_btn)
+        toolbar.addWidget(self.italic_btn)
+        toolbar.addWidget(self.code_btn)
+        toolbar.addWidget(self.link_btn)
+        toolbar.addWidget(self.image_btn)
+        toolbar.addWidget(self.header_btn)
+        
+        layout.addLayout(toolbar)
+        
+        # 에디터와 미리보기 위젯
+        self.editor = QPlainTextEdit()
+        self.editor.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        self.editor.textChanged.connect(self.text_changed)
+        
+        # 마크다운 하이라이터 적용
+        self.highlighter = MarkdownHighlighter(self.editor.document())
+        
+        # 미리보기 브라우저
+        self.preview = QTextBrowser()
+        self.preview.setOpenExternalLinks(True)
+        
+        # 기본적으로 에디터 표시
+        layout.addWidget(self.editor)
+        layout.addWidget(self.preview)
+        self.preview.hide()
+        
+        # 모노스페이스 폰트 적용
+        font = QFont("Consolas, Courier New")
+        font.setPointSize(10)
+        self.editor.setFont(font)
+    
+    def set_mode(self, mode):
+        if mode == "edit":
+            self.edit_mode_btn.setChecked(True)
+            self.preview_mode_btn.setChecked(False)
+            self.editor.show()
+            self.preview.hide()
+            
+            # 편집 관련 버튼 활성화
+            self.bold_btn.setEnabled(True)
+            self.italic_btn.setEnabled(True)
+            self.code_btn.setEnabled(True)
+            self.link_btn.setEnabled(True)
+            self.image_btn.setEnabled(True)
+            self.header_btn.setEnabled(True)
+            
+        elif mode == "preview":
+            self.edit_mode_btn.setChecked(False)
+            self.preview_mode_btn.setChecked(True)
+            self.editor.hide()
+            
+            # 마크다운을 HTML로 변환하여 미리보기에 표시
+            md_text = self.editor.toPlainText()
+            html = self.markdown_to_html(md_text)
+            self.preview.setHtml(html)
+            self.preview.show()
+            
+            # 편집 관련 버튼 비활성화
+            self.bold_btn.setEnabled(False)
+            self.italic_btn.setEnabled(False)
+            self.code_btn.setEnabled(False)
+            self.link_btn.setEnabled(False)
+            self.image_btn.setEnabled(False)
+            self.header_btn.setEnabled(False)
+    
+    def markdown_to_html(self, md_text):
+        extensions = [
+            'markdown.extensions.fenced_code',
+            'markdown.extensions.tables',
+            'markdown.extensions.nl2br',
+            'markdown.extensions.codehilite',
+            TocExtension(baselevel=1)
+        ]
+        return markdown.markdown(md_text, extensions=extensions)
+    
+    def text_changed(self):
+        self.text_changed_signal.emit()
+    
+    def toPlainText(self):
+        return self.editor.toPlainText()
+    
+    def setPlainText(self, text):
+        return self.editor.setPlainText(text)
+    
+    def insert_markdown_format(self, prefix, suffix):
+        cursor = self.editor.textCursor()
+        selected_text = cursor.selectedText()
+        
+        # 선택된 텍스트에 형식 적용
+        if selected_text:
+            cursor.insertText(f"{prefix}{selected_text}{suffix}")
+        else:
+            cursor.insertText(f"{prefix}text{suffix}")
+            # 커서를 "text" 부분에 위치시킴
+            cursor.movePosition(QTextCursor.Left, QTextCursor.MoveAnchor, len(suffix))
+            cursor.movePosition(QTextCursor.Left, QTextCursor.KeepAnchor, 4)  # "text" 선택
+        
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
+    
+    def insert_link(self):
+        cursor = self.editor.textCursor()
+        selected_text = cursor.selectedText()
+        
+        link_text = selected_text if selected_text else "link text"
+        cursor.insertText(f"[{link_text}](https://example.com)")
+        
+        if not selected_text:
+            # 링크 텍스트에 커서 위치
+            cursor.movePosition(QTextCursor.Left, QTextCursor.MoveAnchor, 20)  # "https://example.com)" 길이
+            cursor.movePosition(QTextCursor.Left, QTextCursor.KeepAnchor, 9)   # "link text" 선택
+        
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
+    
+    def insert_image(self):
+        cursor = self.editor.textCursor()
+        cursor.insertText("![image description](image_url)")
+        
+        # 이미지 설명에 커서 위치
+        cursor.movePosition(QTextCursor.Left, QTextCursor.MoveAnchor, 11)  # "image_url)" 길이
+        cursor.movePosition(QTextCursor.Left, QTextCursor.KeepAnchor, 17)  # "image description" 선택
+        
+        self.editor.setTextCursor(cursor)
+        self.editor.setFocus()
 
 # --- YouTube Transcript Helper ---
 def get_youtube_transcript(video_id):
@@ -3514,6 +3795,332 @@ class MainWindow(QMainWindow):
 
         except Exception as e:
             logging.warning(f"Could not check mouse position for auto-hide: {e}", exc_info=True)
+
+
+
+    def create_notepad_widget(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        # 노트 도구 모음
+        tools_layout = QHBoxLayout()
+        
+        add_tab_button = QPushButton("+")
+        add_tab_button.setToolTip("Add New Note")
+        add_tab_button.setFixedSize(40, 25)
+        add_tab_button.clicked.connect(lambda: self.add_new_notepad_tab())
+        
+        save_button = QPushButton("Save")
+        save_button.setToolTip("Save current note")
+        save_button.clicked.connect(self.save_current_note)
+        
+        load_button = QPushButton("Load")
+        load_button.setToolTip("Load note from file")
+        load_button.clicked.connect(self.load_note_from_file)
+        
+        sync_button = QPushButton("Sync")
+        sync_button.setToolTip("Force sync notes")
+        sync_button.clicked.connect(self.force_sync_notes)
+        
+        tools_layout.addWidget(add_tab_button)
+        tools_layout.addWidget(save_button)
+        tools_layout.addWidget(load_button)
+        tools_layout.addWidget(sync_button)
+        tools_layout.addStretch()
+        
+        layout.addLayout(tools_layout)
+        
+        self.notepad_tabs = QTabWidget()
+        self.notepad_tabs.setTabsClosable(True)
+        self.notepad_tabs.setMovable(True)
+        self.notepad_tabs.tabCloseRequested.connect(self.close_notepad_tab)
+        self.notepad_tabs.currentChanged.connect(self.on_notepad_tab_changed)
+        self.notepad_tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
+        self.notepad_tabs.tabBar().customContextMenuRequested.connect(self.show_notepad_tab_context_menu)
+        
+        layout.addWidget(self.notepad_tabs)
+        
+        return widget
+
+    def add_new_notepad_tab(self, name=None, content="", timestamp=None):
+        try:
+            if name is None:
+                i = 1
+                while True:
+                    potential_name = f"New Note {i}"
+                    if not os.path.exists(self.get_note_filepath(potential_name)):
+                        name = potential_name
+                        break
+                    i += 1
+                    if i > 1000:
+                        name = f"Untitled_{int(time.time())}"
+                        break
+            
+            # QTextEdit 대신 MarkdownEditor 사용
+            editor = MarkdownEditor()
+            editor.setPlainText(content)
+            editor.setProperty("timestamp", timestamp or time.time())
+            
+            index = self.notepad_tabs.addTab(editor, name)
+            self.notepad_tabs.setCurrentIndex(index)
+            self.notes_changed[index] = False
+            
+            # Signal 연결
+            editor.text_changed_signal.connect(self.on_notepad_text_changed)
+            self.mark_tab_unsaved(index, False)
+            
+            return index
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to add new note tab: {e}")
+            return -1
+
+    def on_notepad_text_changed(self):
+        index = self.notepad_tabs.currentIndex()
+        if index != -1:
+            self.notes_changed[index] = True
+            self.mark_tab_unsaved(index, True)
+            self.note_save_timer.start()
+
+    def save_note(self, index, mark_saved=True):
+        if not (0 <= index < self.notepad_tabs.count()):
+            return False
+        
+        widget = self.notepad_tabs.widget(index)
+        tab_name = self.notepad_tabs.tabText(index)
+        
+        if tab_name.endswith(" *"):
+            tab_name = tab_name[:-2]
+        
+        if isinstance(widget, MarkdownEditor):  # QTextEdit 대신 MarkdownEditor 검사
+            filepath = self.get_note_filepath(tab_name)
+            content = widget.toPlainText()  # 메서드 이름은 동일
+            timestamp = time.time()
+            
+            try:
+                os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(content)
+                
+                widget.setProperty("timestamp", timestamp)
+                
+                if mark_saved:
+                    self.notes_changed[index] = False
+                    self.mark_tab_unsaved(index, False)
+                
+                logging.info(f"Saved note '{tab_name}' to {filepath}")
+                self.schedule_sync("notepad_update", {"name": tab_name, "content": content, "timestamp": timestamp})
+                
+                return True
+            
+            except Exception as e:
+                QMessageBox.warning(self, "Save Error", f"Failed to save note '{tab_name}':\n{e}")
+                return False
+        
+        return False
+
+    def save_current_note(self):
+        index = self.notepad_tabs.currentIndex()
+        if index != -1:
+            if self.save_note(index, mark_saved=True):
+                self.log_status(f"Note '{self.notepad_tabs.tabText(index)}' saved successfully.", 3000)
+
+    def load_note_from_file(self):
+        filepath, _ = QFileDialog.getOpenFileName(
+            self, "Load Note", "", "Markdown Files (*.md);;Text Files (*.txt);;All Files (*)"
+        )
+        
+        if not filepath:
+            return
+        
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+            
+            filename = os.path.basename(filepath)
+            name, _ = os.path.splitext(filename)
+            
+            # 이미 같은 이름의 탭이 있는지 확인
+            for i in range(self.notepad_tabs.count()):
+                tab_text = self.notepad_tabs.tabText(i)
+                if tab_text.endswith(" *"):
+                    tab_text = tab_text[:-2]
+                
+                if tab_text == name:
+                    reply = QMessageBox.question(
+                        self, "Note Exists", 
+                        f"A note named '{name}' already exists. Do you want to replace it?",
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+                    )
+                    
+                    if reply == QMessageBox.Yes:
+                        widget = self.notepad_tabs.widget(i)
+                        if isinstance(widget, MarkdownEditor):
+                            widget.setPlainText(content)
+                            self.notepad_tabs.setCurrentIndex(i)
+                            self.notes_changed[i] = True
+                            self.mark_tab_unsaved(i, True)
+                            self.log_status(f"Note '{name}' replaced with content from {filepath}", 3000)
+                            return
+                    else:
+                        # 다른 이름으로 추가
+                        name = f"{name}_imported"
+            
+            # 새 탭 추가
+            index = self.add_new_notepad_tab(name=name, content=content)
+            if index >= 0:
+                self.log_status(f"Note loaded from {filepath}", 3000)
+        
+        except Exception as e:
+            QMessageBox.warning(self, "Load Error", f"Failed to load note from '{filepath}':\n{e}")
+
+    def force_sync_notes(self):
+        if not self.p2p_manager or not self.p2p_manager.p2p_enabled or not self.p2p_manager.running:
+            QMessageBox.information(self, "Sync Info", "P2P synchronization is not enabled or not running.")
+            return
+        
+        # 모든 노트 먼저 저장
+        self.save_all_notes()
+        
+        # 동기화 준비 및 트리거
+        self.log_status("Forcing notes synchronization...", 3000)
+        self.trigger_sync()
+        
+        QMessageBox.information(self, "Sync", "Notes synchronization has been triggered.")
+
+    def sync_notepad_content(self, remote_notepad_data):
+        logging.debug(f"Syncing notepad. Remote notes: {len(remote_notepad_data)}")
+        
+        local_tabs_info = {}
+        for i in range(self.notepad_tabs.count()):
+            tab_name_display = self.notepad_tabs.tabText(i)
+            tab_name_actual = tab_name_display[:-2] if tab_name_display.endswith(" *") else tab_name_display
+            widget = self.notepad_tabs.widget(i)
+            
+            if isinstance(widget, MarkdownEditor):  # QTextEdit 대신 MarkdownEditor 검사
+                local_tabs_info[tab_name_actual] = {
+                    "widget": widget, 
+                    "index": i, 
+                    "timestamp": widget.property("timestamp") or 0,
+                    "is_unsaved": self.notes_changed.get(i, False)
+                }
+
+        current_tab_text_before_sync = self.notepad_tabs.tabText(self.notepad_tabs.currentIndex()) if self.notepad_tabs.count() > 0 else None
+        ui_changed = False
+
+        # Process updates and additions from remote
+        for remote_name, remote_note_data in remote_notepad_data.items():
+            remote_content = remote_note_data.get("content", "")
+            remote_timestamp = remote_note_data.get("timestamp", 0)
+
+            if remote_name in local_tabs_info:
+                local_info = local_tabs_info[remote_name]
+                local_widget = local_info["widget"]
+                local_timestamp = local_info["timestamp"]
+                local_is_unsaved = local_info["is_unsaved"]
+                local_index = local_info["index"]
+
+                if remote_timestamp > local_timestamp:
+                    if local_is_unsaved and local_timestamp > remote_timestamp:
+                        logging.info(f"Note '{remote_name}': Local unsaved version is newer, keeping local.")
+                    elif local_widget.toPlainText() != remote_content:
+                        logging.info(f"Note '{remote_name}': Updating with newer remote content (RemoteTS: {remote_timestamp}, LocalTS: {local_timestamp}).")
+                        local_widget.setPlainText(remote_content)
+                        local_widget.setProperty("timestamp", remote_timestamp)
+                        self.notes_changed[local_index] = False
+                        self.mark_tab_unsaved(local_index, False)
+                        ui_changed = True
+                elif local_timestamp > remote_timestamp and not local_is_unsaved:
+                    logging.debug(f"Note '{remote_name}': Local saved version is newer. Remote will update.")
+
+            else:
+                logging.info(f"Note '{remote_name}': Adding new note from remote sync.")
+                self.add_new_notepad_tab(name=remote_name, content=remote_content, timestamp=remote_timestamp)
+                ui_changed = True
+        
+        # Process deletions
+        local_note_names = set(local_tabs_info.keys())
+        remote_note_names = set(remote_notepad_data.keys())
+        notes_to_delete_locally = local_note_names - remote_note_names
+
+        if notes_to_delete_locally:
+            for note_name_to_delete in notes_to_delete_locally:
+                logging.info(f"Note '{note_name_to_delete}': Removing as it was deleted remotely.")
+                local_info = local_tabs_info[note_name_to_delete]
+                
+                self.notepad_tabs.removeTab(local_info["index"])
+                
+                if local_info["index"] in self.notes_changed:
+                    del self.notes_changed[local_info["index"]]
+                
+                ui_changed = True
+
+        if ui_changed:
+            logging.info("Notepad content updated from P2P sync.")
+            
+            if self.notepad_tabs.count() == 0:
+                self.add_initial_notepad_tab()
+            
+            # 현재 탭 복원
+            if current_tab_text_before_sync:
+                restored_idx = -1
+                clean_current_tab_name = current_tab_text_before_sync[:-2] if current_tab_text_before_sync.endswith(" *") else current_tab_text_before_sync
+                
+                for i in range(self.notepad_tabs.count()):
+                    tab_text = self.notepad_tabs.tabText(i)
+                    clean_tab_text = tab_text[:-2] if tab_text.endswith(" *") else tab_text
+                    
+                    if clean_tab_text == clean_current_tab_name:
+                        restored_idx = i
+                        break
+                
+                if restored_idx != -1:
+                    self.notepad_tabs.setCurrentIndex(restored_idx)
+
+    def load_notes(self):
+        logging.info(f"Loading notes from: {self.notes_directory}")
+        
+        try:
+            while self.notepad_tabs.count() > 0:
+                self.notepad_tabs.removeTab(0)
+            
+            self.notes_changed.clear()
+            
+            if not os.path.isdir(self.notes_directory):
+                return self.add_initial_notepad_tab()
+            
+            loaded_count = 0
+            
+            for filename in sorted(os.listdir(self.notes_directory)):
+                if filename.endswith(".txt") or filename.endswith(".md"):
+                    filepath = os.path.join(self.notes_directory, filename)
+                    tab_name = os.path.splitext(filename)[0]
+                    
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        
+                        timestamp = os.path.getmtime(filepath)
+                        self.add_new_notepad_tab(name=tab_name, content=content, timestamp=timestamp)
+                        loaded_count += 1
+                    
+                    except Exception as e:
+                        logging.error(f"Error loading note '{filename}': {e}")
+            
+            if loaded_count == 0:
+                self.add_initial_notepad_tab()
+            
+            logging.info(f"Loaded {loaded_count} notes.")
+        
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load notes: {e}")
+            self.add_initial_notepad_tab()
+
+    def get_note_filepath(self, note_name):
+        # .txt 대신 .md 확장자 사용
+        safe_filename = re.sub(r"[\/*?:\"<>|]", "_", note_name) + ".md"
+        return os.path.join(self.notes_directory, safe_filename)
 
 # --- Main Execution ---
 if __name__ == "__main__":
