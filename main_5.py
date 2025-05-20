@@ -374,18 +374,41 @@ class MarkdownEditor(QWidget):
         self.editor.setFocus()
 
 # --- YouTube Transcript Helper ---
-def get_youtube_transcript(video_id):
-    try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("ko",))
-        return " ".join([item['text'] for item in transcript_list])
-    except Exception as e:
-        logging.error(f"Error fetching YouTube transcript: {e}")
+def get_youtube_transcript(video_id,**kwargs):
+    '''
+    kwargs:
+        proxy_disabled: bool, default=True
+        Proxy_http: str, default="http://168.219.61.252:8080"
+        Proxy_https: str, default="http://168.219.61.252:8080"
+    '''
+    proxy_disabled = kwargs.get("proxy_disabled", True)
+    if proxy_disabled:
         try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("en",))
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("ko",))
             return " ".join([item['text'] for item in transcript_list])
         except Exception as e:
             logging.error(f"Error fetching YouTube transcript: {e}")
-            return f"Error fetching transcript: {str(e)}"
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("en",))
+                return " ".join([item['text'] for item in transcript_list])
+            except Exception as e:
+                logging.error(f"Error fetching YouTube transcript: {e}")
+                return f"Error fetching transcript: {str(e)}"
+    else:
+        Proxy_http = kwargs.get("Proxy_http", "http://168.219.61.252:8080")
+        Proxy_https = kwargs.get("Proxy_https", "http://168.219.61.252:8080")
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("ko",),proxies={"http": Proxy_http, "https": Proxy_https},verify=False)
+            return " ".join([item['text'] for item in transcript_list])
+        except Exception as e:
+            logging.error(f"Error fetching YouTube transcript: {e}")
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("en",),proxies={"http": Proxy_http, "https": Proxy_https},verify=False)
+                return " ".join([item['text'] for item in transcript_list])
+            except Exception as e:
+                logging.error(f"Error fetching YouTube transcript: {e}")
+                return f"Error fetching transcript: {str(e)}"
+
 
 # --- Google Search Helper ---
 def search_google(query, api_key, cx):

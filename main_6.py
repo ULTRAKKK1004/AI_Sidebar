@@ -376,19 +376,40 @@ class MarkdownEditor(QWidget):
         self.editor.setFocus()
 
 # --- YouTube Transcript Helper ---
-def get_youtube_transcript(video_id):
-    try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("ko",))
-        return " ".join([item['text'] for item in transcript_list])
-    except Exception as e:
-        logging.error(f"Error fetching YouTube transcript: {e}")
+def get_youtube_transcript(video_id,**kwargs):
+    '''
+    kwargs:
+        proxy_disabled: bool, default=True
+        Proxy_http: str, default="http://168.219.61.252:8080"
+        Proxy_https: str, default="http://168.219.61.252:8080"
+    '''
+    proxy_disabled = kwargs.get("proxy_disabled", True)
+    if proxy_disabled:
         try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("en",))
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("ko",))
             return " ".join([item['text'] for item in transcript_list])
         except Exception as e:
             logging.error(f"Error fetching YouTube transcript: {e}")
-            return f"Error fetching transcript: {str(e)}"
-
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("en",))
+                return " ".join([item['text'] for item in transcript_list])
+            except Exception as e:
+                logging.error(f"Error fetching YouTube transcript: {e}")
+                return f"Error fetching transcript: {str(e)}"
+    else:
+        Proxy_http = kwargs.get("Proxy_http", "http://168.219.61.252:8080")
+        Proxy_https = kwargs.get("Proxy_https", "http://168.219.61.252:8080")
+        try:
+            transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("ko",),proxies={"http": Proxy_http, "https": Proxy_https},verify=False)
+            return " ".join([item['text'] for item in transcript_list])
+        except Exception as e:
+            logging.error(f"Error fetching YouTube transcript: {e}")
+            try:
+                transcript_list = YouTubeTranscriptApi.get_transcript(video_id,languages=("en",),proxies={"http": Proxy_http, "https": Proxy_https},verify=False)
+                return " ".join([item['text'] for item in transcript_list])
+            except Exception as e:
+                logging.error(f"Error fetching YouTube transcript: {e}")
+                return f"Error fetching transcript: {str(e)}"
 # --- Google Search Helper ---
 def search_google(query, api_key, cx):
     try:
@@ -1909,6 +1930,9 @@ class AssistantWidget(QWidget):
         self.summarized_history = ""
         self.current_assistant_response = ""
         self.uploaded_files = []
+        self.proxy_disabled = True
+        self.Proxy_http = "http://168.219.61.252:8080"
+        self.Proxy_https = "http://168.219.61.252:8080"
         self.google_api_key = ""
         self.google_cx = ""
         # 메인 레이아웃
@@ -2143,7 +2167,10 @@ class AssistantWidget(QWidget):
             for video_id in youtube_matches:
                 try:
                     self.append_text_to_view(f"\n**Processing YouTube video transcript:** https://youtube.com/watch?v={video_id}\n")
-                    transcript = get_youtube_transcript(video_id)
+                    if self.proxy_disabled:
+                        transcript = get_youtube_transcript(video_id,proxy_disabled=self.proxy_disabled)
+                    else:
+                        transcript = get_youtube_transcript(video_id,proxy_disabled=self.proxy_disabled,Proxy_http=self.Proxy_http,Proxy_https=self.Proxy_https)
                     
                     # 트랜스크립트가 너무 길 경우 축약
                     if len(transcript) > 2000:
@@ -2283,7 +2310,7 @@ class MainWindow(QMainWindow):
         self.google_api_key = ""
         self.google_cx = ""
         
-        self.load_settings()
+        
         
         self.clipboard_history = []
         self.monitoring_clipboard = True
@@ -2308,7 +2335,7 @@ class MainWindow(QMainWindow):
         self.central_widget.addWidget(self.process_widget)
         self.central_widget.addWidget(self.notepad_widget)
         self.central_widget.addWidget(self.assistant_widget)
-        
+        self.load_settings()
         self.load_splitter_state()
         
         self.status_bar = self.statusBar()
@@ -2406,6 +2433,7 @@ class MainWindow(QMainWindow):
         self.webui_model = self.settings.value("webui/selected_model", defaultValue="")
         # 프록시 설정 로드
         self.proxy_disabled = self.settings.value("webui/disable_proxy", defaultValue=False, type=bool)
+        self.assistant_widget.proxy_disabled = self.proxy_disabled
         
         # Google API 설정 로드
         self.google_api_key = self.settings.value("google/apikey", defaultValue="")
