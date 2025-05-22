@@ -83,6 +83,13 @@ LOG_FILE_BACKUP_COUNT = 5
 MAX_CONVERSATION_LENGTH = 2000  # 최대 대화 길이 (요약 전) 기존값 10
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB 파일 업로드 제한 기존값 10MB
 
+# 전역 상수 정의
+DEFAULT_WEBUI_ENDPOINT = os.getenv("DEFAULT_WEBUI_ENDPOINT", "http://localhost:8000")
+DEFAULT_WEBUI_API_KEY = os.getenv("DEFAULT_WEBUI_API_KEY", "your api key")
+DEFAULT_WEBUI_MODEL = os.getenv("DEFAULT_WEBUI_MODEL", "gpt-4o-mini")
+Proxy_http = os.getenv("Proxy_http", "http://168.219.61.252:8080")
+Proxy_https = os.getenv("Proxy_https", "http://168.219.61.252:8080")
+
 # --- Setup Logging ---
 def setup_logging():
     log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s")
@@ -408,8 +415,6 @@ def get_youtube_transcript(video_id,**kwargs):
             except Exception as e:
                 logging.error(f"Error fetching YouTube transcript: {e}")
                 return f"Error fetching transcript: {str(e)}"
-
-
 # --- Google Search Helper ---
 def search_google(query, api_key, cx):
     try:
@@ -453,19 +458,18 @@ class Peer:
 class SettingsDialog(QDialog):
     settings_updated_signal = Signal()
 
+    # 수정된 SettingsDialog 초기화 부분 (model_combo 부분 추가)
     def __init__(self, settings, parent=None):
         super().__init__(parent)
         self.settings = settings
         self.setWindowTitle("Settings")
         self.setModal(True)
         self.setMinimumWidth(500)
-        
         main_layout = QVBoxLayout(self)
         
         # General Settings
         general_group = QGroupBox("General")
         general_layout = QFormLayout(general_group)
-        
         notes_dir_layout = QHBoxLayout()
         self.notes_dir_edit = QLineEdit()
         self.notes_dir_edit.setReadOnly(True)
@@ -474,36 +478,28 @@ class SettingsDialog(QDialog):
         notes_dir_layout.addWidget(self.notes_dir_edit)
         notes_dir_layout.addWidget(notes_browse_button)
         general_layout.addRow("Notes Directory:", notes_dir_layout)
-        
         main_layout.addWidget(general_group)
         
         # P2P Settings
         p2p_group = QGroupBox("P2P Synchronization")
         p2p_layout = QFormLayout(p2p_group)
-        
         self.p2p_enabled_checkbox = QCheckBox("Enable P2P Synchronization")
         p2p_layout.addRow(self.p2p_enabled_checkbox)
-        
         # 암호화 선택 옵션 추가
         self.p2p_encryption_checkbox = QCheckBox("Enable Encryption")
         p2p_layout.addRow(self.p2p_encryption_checkbox)
-        
         self.sync_user_edit = QLineEdit()
         p2p_layout.addRow("Username:", self.sync_user_edit)
-        
         self.sync_pass_edit = QLineEdit()
         self.sync_pass_edit.setEchoMode(QLineEdit.Password)
         p2p_layout.addRow("Password:", self.sync_pass_edit)
-        
         self.p2p_port_edit = QLineEdit()
         self.p2p_port_edit.setPlaceholderText(str(DEFAULT_P2P_PORT))
         p2p_layout.addRow("Listen Port:", self.p2p_port_edit)
-        
         p2p_layout.addRow(QLabel("Peers (IP:Port):"))
         self.peer_list_widget = QListWidget()
         self.peer_list_widget.setSelectionMode(QAbstractItemView.SingleSelection)
         p2p_layout.addRow(self.peer_list_widget)
-        
         peer_button_layout = QHBoxLayout()
         self.add_peer_button = QPushButton("Add Peer")
         self.remove_peer_button = QPushButton("Remove Peer")
@@ -512,21 +508,24 @@ class SettingsDialog(QDialog):
         peer_button_layout.addWidget(self.add_peer_button)
         peer_button_layout.addWidget(self.remove_peer_button)
         p2p_layout.addRow(peer_button_layout)
-        
         main_layout.addWidget(p2p_group)
         
         # WebUI Assistant Settings
         webui_group = QGroupBox("Open WebUI Assistant")
         webui_layout = QFormLayout(webui_group)
-        
         self.webui_endpoint_edit = QLineEdit()
         self.webui_endpoint_edit.setPlaceholderText("http://localhost:8080")
         webui_layout.addRow("Endpoint URL:", self.webui_endpoint_edit)
-        
         self.webui_apikey_edit = QLineEdit()
         self.webui_apikey_edit.setEchoMode(QLineEdit.Password)
         webui_layout.addRow("API Key (Optional):", self.webui_apikey_edit)
         
+        # 프록시 예외 설정 추가 (수정사항 3)
+        self.disable_proxy_checkbox = QCheckBox("Disable Proxy for AI Endpoint")
+        self.disable_proxy_checkbox.setToolTip("Use direct connection without system proxy (helps with SSL issues)")
+        webui_layout.addRow(self.disable_proxy_checkbox)
+        
+        # 모델 콤보박스 설정 부분 (누락된 부분)
         model_layout = QHBoxLayout()
         self.webui_model_combo = QComboBox()
         self.webui_model_combo.setMinimumWidth(200)
@@ -541,14 +540,11 @@ class SettingsDialog(QDialog):
         # Google Search API Settings
         google_api_group = QGroupBox("Google Search API")
         google_api_layout = QFormLayout(google_api_group)
-        
         self.google_api_key_edit = QLineEdit()
         self.google_api_key_edit.setEchoMode(QLineEdit.Password)
         google_api_layout.addRow("Google API Key:", self.google_api_key_edit)
-        
         self.google_cx_edit = QLineEdit()
         google_api_layout.addRow("Google Custom Search ID (CX):", self.google_cx_edit)
-        
         main_layout.addWidget(google_api_group)
         
         # Dialog Buttons
@@ -558,7 +554,6 @@ class SettingsDialog(QDialog):
         main_layout.addWidget(button_box)
         
         self.load_settings_values()
-        
         # 암호화 체크박스와 암호 필드 연결
         self.p2p_encryption_checkbox.stateChanged.connect(self.toggle_encryption_fields)
         
@@ -596,7 +591,10 @@ class SettingsDialog(QDialog):
         
         self.webui_endpoint_edit.setText(self.settings.value("webui/endpoint", defaultValue=""))
         self.webui_apikey_edit.setText(self.settings.value("webui/apikey", defaultValue=""))
-        
+        # 프록시 설정 로드
+        self.disable_proxy_checkbox.setChecked(self.settings.value("webui/disable_proxy", defaultValue=False, type=bool))
+    
+    
         # Google API 설정 로드
         self.google_api_key_edit.setText(self.settings.value("google/apikey", defaultValue=""))
         self.google_cx_edit.setText(self.settings.value("google/cx", defaultValue=""))
@@ -653,10 +651,14 @@ class SettingsDialog(QDialog):
         headers = {"Accept": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        
+        # 프록시 설정 가져오기
+        proxy_disabled = self.disable_proxy_checkbox.isChecked()     
         try:
             logging.info(f"Fetching models from {url}")
-            response = requests.get(url, headers=headers, timeout=10)
+            if not proxy_disabled:
+                response = requests.get(url, headers=headers, timeout=10, verify=False, proxies={"http": Proxy_http, "https": Proxy_https})
+            else:
+                response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             res_text = response.content.decode("utf-8")
             result = json.loads(res_text)
@@ -751,7 +753,8 @@ class SettingsDialog(QDialog):
         self.settings.setValue("webui/endpoint", self.webui_endpoint_edit.text().strip())
         self.settings.setValue("webui/apikey", self.webui_apikey_edit.text().strip())
         self.settings.setValue("webui/selected_model", self.webui_model_combo.currentText())
-        
+        # 프록시 설정 저장
+        self.settings.setValue("webui/disable_proxy", self.disable_proxy_checkbox.isChecked())
         # Google API 설정 저장
         self.settings.setValue("google/apikey", self.google_api_key_edit.text().strip())
         self.settings.setValue("google/cx", self.google_cx_edit.text().strip())
@@ -1790,13 +1793,14 @@ class WebUIWorker(QObject):
     stream_chunk = Signal(str)
     stream_finished = Signal()
 
-    def __init__(self, endpoint, api_key, model=None, messages=None):
+    def __init__(self, endpoint, api_key, model=None, messages=None, proxy_disabled=True):
         super().__init__()
         self.endpoint = endpoint
         self.api_key = api_key
         self.model = model
         self.messages = messages if messages else []
         self._running = True
+        self.proxy_disabled = proxy_disabled  # 프록시 사용 여부 설정 추가
 
     @Slot()
     def run_fetch_models(self):
@@ -1811,8 +1815,12 @@ class WebUIWorker(QObject):
             headers["Authorization"] = f"Bearer {self.api_key}"
         
         try:
-            logging.info(f"Worker fetching models from {url}")
-            response = requests.get(url, headers=headers, timeout=10)
+            logging.info(f"Worker fetching models from {url}")# 프록시 설정에 따라 요청
+            if not self.proxy_disabled:
+                response = requests.get(url, headers=headers, timeout=10, verify=False, proxies={"http": Proxy_http, "https": Proxy_https})
+            else:
+                response = requests.get(url, headers=headers, timeout=10)
+
             response.raise_for_status()
             res_text = response.content.decode("utf-8")
             res_js = json.loads(res_text)
@@ -1862,33 +1870,17 @@ class WebUIWorker(QObject):
         payload = {"model": self.model, "messages": self.messages, "stream": True}
         
         try:
-            logging.info(f"Worker sending chat request to {url} for model {self.model} with {len(self.messages)} messages.")
-            
-            with requests.post(url, headers=headers, json=payload, stream=True, timeout=300) as response:
-                response.raise_for_status()
+            logging.info(f"Worker sending chat request with {len(self.messages)} messages.")
+            # 프록시 설정에 따라 요청
+            if not self.proxy_disabled:
+                with requests.post(url, headers=headers, json=payload, stream=True, timeout=300,verify=False, proxies={"http": Proxy_http, "https": Proxy_https}) as response:
+                    self._process_stream_response(response)
+            else:
+                with requests.post(url, headers=headers, json=payload, stream=True, timeout=300) as response:
+                    self._process_stream_response(response)
+
                 
-                for line in response.iter_lines(decode_unicode=True):
-                    if not self._running:
-                        break
                     
-                    if line.startswith("data:"):
-                        json_str = line[len("data:"):].strip()
-                        if json_str == "[DONE]":
-                            break
-                        
-                        if json_str:
-                            try:
-                                data = json.loads(json_str)
-                                if "choices" in data and data["choices"]:
-                                    delta = data["choices"][0].get("delta", {})
-                                    message_content = delta.get("content", "")
-                                    if message_content:
-                                        self.stream_chunk.emit(message_content)
-                            except json.JSONDecodeError:
-                                logging.warning(f"JSON decode error in stream line: {line}")
-                            except Exception as e:
-                                logging.error(f"Error processing stream part: {e} - Line: {line}")
-                                
         except requests.exceptions.Timeout:
             self.error.emit("Connection timed out.")
         except requests.exceptions.RequestException as e:
@@ -1907,89 +1899,96 @@ class WebUIWorker(QObject):
         self._running = False
         logging.info("WebUIWorker stop requested.")
 
-# --- Assistant Widget (확장된 기능 포함) ---
+    def _process_stream_response(self, response):
+        response.raise_for_status()
+        for line in response.iter_lines(decode_unicode=True):
+            if not self._running:
+                break
+            if line.startswith("data:"):
+                json_str = line[len("data:"):].strip()
+                if json_str == "[DONE]":
+                    break
+                if json_str:
+                    try:
+                        data = json.loads(json_str)
+                        if "choices" in data and data["choices"]:
+                            delta = data["choices"][0].get("delta", {})
+                            message_content = delta.get("content", "")
+                            if message_content:
+                                self.stream_chunk.emit(message_content)
+                    except json.JSONDecodeError:
+                        logging.warning(f"JSON decode error in stream line: {line}")
+                    except Exception as e:
+                        logging.error(f"Error processing stream part: {e} - Line: {line}")
+
+
+
+# --- 수정사항 2: Assistant에서 Upload File 버튼 및 기능 제거 ---
+
 class AssistantWidget(QWidget):
     send_conversation_signal = Signal(list)
     web_search_signal = Signal(str)  # 웹 검색 요청 시그널
     summarize_conversation_signal = Signal()  # 대화 요약 시그널
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.conversation_history = []
         self.summarized_history = ""
         self.current_assistant_response = ""
         self.uploaded_files = []
+        self.proxy_disabled = True
+        self.Proxy_http = "http://168.219.61.252:8080"
+        self.Proxy_https = "http://168.219.61.252:8080"
         self.google_api_key = ""
         self.google_cx = ""
-        
         # 메인 레이아웃
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
-        
         # 타이틀과 버튼 레이아웃
         title_layout = QHBoxLayout()
         title_layout.addWidget(QLabel("Assistant"))
         title_layout.addStretch()
-        
         self.new_chat_button = QPushButton("New Chat")
         self.new_chat_button.setToolTip("Start a new conversation")
         title_layout.addWidget(self.new_chat_button)
-        
         layout.addLayout(title_layout)
-        
         # 대화 뷰
         self.conversation_view = QPlainTextEdit()
         self.conversation_view.setReadOnly(True)
         self.conversation_view.setAcceptDrops(True)
         layout.addWidget(self.conversation_view)
-        
         # 파일 업로드 및 도구 영역
         tools_layout = QHBoxLayout()
-        
-        self.upload_button = QPushButton("Upload File")
-        self.upload_button.setToolTip("Upload a file to the conversation")
-        
+        # Upload File 버튼 제거
         self.search_button = QPushButton("Web Search")
         self.search_button.setToolTip("Search the web for information")
-        
         # 추가기능 버튼 - 요약
         self.summarize_button = QPushButton("Summarize")
         self.summarize_button.setToolTip("Summarize the conversation")
-        
-        tools_layout.addWidget(self.upload_button)
         tools_layout.addWidget(self.search_button)
         tools_layout.addWidget(self.summarize_button)
         tools_layout.addStretch()
-        
         layout.addLayout(tools_layout)
-        
         # 파일 업로드 표시 영역
         self.uploads_list = QListWidget()
         self.uploads_list.setMaximumHeight(80)
         self.uploads_list.setVisible(False)
         layout.addWidget(self.uploads_list)
-        
         # 프롬프트 입력 영역
         prompt_layout = QHBoxLayout()
         self.prompt_input = QLineEdit()
         self.prompt_input.setPlaceholderText("Enter your prompt...")
         self.prompt_input.setAcceptDrops(True)
-        
         self.send_button = QPushButton("Send")
-        
         prompt_layout.addWidget(self.prompt_input)
         prompt_layout.addWidget(self.send_button)
-        
         layout.addLayout(prompt_layout)
-        
         # 시그널 연결
         self.send_button.clicked.connect(self.send_prompt)
         self.prompt_input.returnPressed.connect(self.send_prompt)
         self.new_chat_button.clicked.connect(self.clear_conversation)
-        self.upload_button.clicked.connect(self.open_file_dialog)
+        # upload_button.clicked.connect(self.open_file_dialog) 제거
         self.search_button.clicked.connect(self.handle_web_search)
         self.summarize_button.clicked.connect(self.handle_summarize)
-        
         # 드래그 앤 드롭 설정
         self.setAcceptDrops(True)
         self.conversation_view.installEventFilter(self)
@@ -2173,7 +2172,10 @@ class AssistantWidget(QWidget):
             for video_id in youtube_matches:
                 try:
                     self.append_text_to_view(f"\n**Processing YouTube video transcript:** https://youtube.com/watch?v={video_id}\n")
-                    transcript = get_youtube_transcript(video_id)
+                    if self.proxy_disabled:
+                        transcript = get_youtube_transcript(video_id,proxy_disabled=self.proxy_disabled)
+                    else:
+                        transcript = get_youtube_transcript(video_id,proxy_disabled=self.proxy_disabled,Proxy_http=self.Proxy_http,Proxy_https=self.Proxy_https)
                     
                     # 트랜스크립트가 너무 길 경우 축약
                     if len(transcript) > 2000:
@@ -2230,9 +2232,11 @@ class AssistantWidget(QWidget):
             # 일반 프롬프트만 추가
             self.conversation_history.append({"role": "user", "content": prompt_text})
         
+        # Clear input and disable send button
         self.prompt_input.clear()
         self.send_button.setEnabled(False)
         self.new_chat_button.setEnabled(False)
+        # Reset buffer for assistant response
         self.current_assistant_response = ""
         
         # 대화가 너무 길어지면 요약 처리
@@ -2313,7 +2317,7 @@ class MainWindow(QMainWindow):
         self.google_api_key = ""
         self.google_cx = ""
         
-        self.load_settings()
+        
         
         self.clipboard_history = []
         self.monitoring_clipboard = True
@@ -2338,8 +2342,9 @@ class MainWindow(QMainWindow):
         self.central_widget.addWidget(self.process_widget)
         self.central_widget.addWidget(self.notepad_widget)
         self.central_widget.addWidget(self.assistant_widget)
-        
+        self.load_settings()
         self.load_splitter_state()
+        self.set_default_splitter_sizes()
         
         self.status_bar = self.statusBar()
         
@@ -2434,6 +2439,9 @@ class MainWindow(QMainWindow):
         self.webui_endpoint = self.settings.value("webui/endpoint", defaultValue="")
         self.webui_apikey = self.settings.value("webui/apikey", defaultValue="")
         self.webui_model = self.settings.value("webui/selected_model", defaultValue="")
+        # 프록시 설정 로드
+        self.proxy_disabled = self.settings.value("webui/disable_proxy", defaultValue=False, type=bool)
+        self.assistant_widget.proxy_disabled = self.proxy_disabled
         
         # Google API 설정 로드
         self.google_api_key = self.settings.value("google/apikey", defaultValue="")
@@ -2442,7 +2450,7 @@ class MainWindow(QMainWindow):
         self.auto_hide_enabled = self.settings.value("window/autoHide", defaultValue=True, type=bool)
         
         current_always_on_top = bool(self.windowFlags() & Qt.WindowStaysOnTopHint)
-        saved_always_on_top = self.settings.value("window/alwaysOnTop", defaultValue=True, type=bool)
+        saved_always_on_top = self.settings.value("window/alwaysOnTop", defaultValue=False, type=bool)
         
         if current_always_on_top != saved_always_on_top:
             self.toggle_always_on_top(saved_always_on_top, save_setting=False)
@@ -2567,29 +2575,24 @@ class MainWindow(QMainWindow):
         return widget
 
     def update_assistant_availability(self):
-        enabled = bool(self.webui_endpoint and self.webui_model)
-        self.assistant_widget.setEnabled(enabled)
-        
-        if not enabled:
-            self.assistant_widget.prompt_input.setPlaceholderText("Configure WebUI Endpoint and Model in Settings...")
-            self.assistant_widget.clear_conversation()
-        else:
-            self.assistant_widget.prompt_input.setPlaceholderText("Enter your prompt...")
-        
-        logging.info(f"Assistant enabled status: {enabled}")
+        """Enable/disable assistant based on settings."""
+        # 기본값이 있으므로 항상 활성화
+        self.assistant_widget.setEnabled(True)
+        self.assistant_widget.prompt_input.setPlaceholderText("Enter your prompt...")
+        logging.info("Assistant enabled with default settings")
 
     @Slot(list)
     def handle_assistant_conversation(self, messages):
-        if not self.webui_endpoint or not self.webui_model:
-            QMessageBox.warning(self, "Assistant Error", "WebUI Endpoint or Model not configured in Settings.")
-            self.assistant_widget.on_stream_finished()
-            return
+        # endpoint가 설정되어 있지 않은 경우 기본값 사용
+        endpoint = self.webui_endpoint if self.webui_endpoint else DEFAULT_WEBUI_ENDPOINT
+        api_key = self.webui_apikey if self.webui_apikey else DEFAULT_WEBUI_API_KEY
+        model = self.webui_model if self.webui_model else DEFAULT_WEBUI_MODEL
         
         if self.webui_worker and self.webui_thread.isRunning():
             logging.warning("Assistant is already processing a request.")
             return
         
-        self.start_webui_chat_signal.emit(self.webui_endpoint, self.webui_apikey, self.webui_model, messages)
+        self.start_webui_chat_signal.emit(endpoint, api_key, model, messages)
 
     @Slot(str)
     def handle_web_search(self, query):
@@ -2615,7 +2618,8 @@ class MainWindow(QMainWindow):
             self.webui_thread.quit()
             self.webui_thread.wait(500)
         
-        self.webui_worker = WebUIWorker(endpoint, api_key, model, messages)
+        # 프록시 설정을 포함하여 Worker 생성
+        self.webui_worker = WebUIWorker(endpoint, api_key, model, messages, self.proxy_disabled)
         self.webui_worker.moveToThread(self.webui_thread)
         
         try:
@@ -2648,7 +2652,7 @@ class MainWindow(QMainWindow):
         self.webui_thread.finished.connect(lambda: setattr(self, 'webui_worker', None))
         
         self.webui_thread.start()
-        logging.info("WebUI chat worker started.")
+        logging.info(f"WebUI chat worker started (proxy {'disabled' if self.proxy_disabled else 'enabled'}).")
 
     @Slot(str)
     def handle_webui_error(self, error_message):
@@ -2675,6 +2679,14 @@ class MainWindow(QMainWindow):
 
     def load_splitter_state(self):
         try:
+            # 이전에 저장된 크기 불러오기
+            saved_sizes = self.settings.value("window/splitterSizes")
+            if isinstance(saved_sizes, list) and len(saved_sizes) == 4 and all(isinstance(size, int) for size in saved_sizes):
+                self.central_widget.setSizes(saved_sizes)
+                logging.info(f"Restored splitter sizes: {saved_sizes}")
+                return
+            
+            # 기존 상태 복원 시도
             state = self.settings.value("window/splitterState")
             if isinstance(state, QByteArray) and not state.isEmpty():
                 if self.central_widget.restoreState(state):
@@ -2685,9 +2697,7 @@ class MainWindow(QMainWindow):
                     logging.warning("Failed to restore splitter state, using defaults.")
             else:
                 logging.info("No saved splitter state found, using defaults.")
-            
             self.set_default_splitter_sizes()
-            
         except Exception as e:
             logging.error(f"Error loading splitter state: {e}")
             self.set_default_splitter_sizes()
@@ -2696,16 +2706,25 @@ class MainWindow(QMainWindow):
         total_height = self.central_widget.height()
         if total_height <= 0:
             total_height = 800 # Fallback if height not determined yet
-        
         sizes = [
-            int(total_height * 0.15),
-            int(total_height * 0.15),
-            int(total_height * 0.30),
-            int(total_height * 0.40)
+            int(total_height * 0.25),
+            int(total_height * 0.1),
+            int(total_height * 0.4),
+            int(total_height * 0.25)
         ]
-        
         self.central_widget.setSizes(sizes)
         logging.info(f"Set default splitter sizes: {sizes}")
+
+    def save_splitter_state(self):
+        try:
+            # 상태와 크기 모두 저장
+            state = self.central_widget.saveState()
+            sizes = self.central_widget.sizes()
+            self.settings.setValue("window/splitterState", state)
+            self.settings.setValue("window/splitterSizes", sizes)
+            logging.info(f"Saved splitter state and sizes: {sizes}")
+        except Exception as e:
+            logging.error(f"Error saving splitter state: {e}")
 
     def adjust_splitter_sizes(self):
         sizes = self.central_widget.sizes()
@@ -2817,20 +2836,11 @@ class MainWindow(QMainWindow):
 
     def show_window(self):
         # Determine the correct flags for a frameless tool window
-        new_flags = Qt.FramelessWindowHint | Qt.Tool
-        
-        # Add WindowStaysOnTopHint if the corresponding action is checked
-        if hasattr(self, 'always_on_top_action') and self.always_on_top_action.isChecked():
-            new_flags |= Qt.WindowStaysOnTopHint
-        
-        # Set the window flags. This operation can hide the window, so it's done before showing.
-        self.setWindowFlags(new_flags)
-        
-        # Now, make the window visible and bring it to the front.
-        self.showNormal()     # Ensures the window is shown and de-minimized.
-        self.activateWindow() # Attempts to make the window the active, focused window.
-        self.raise_()         # Raises the window to the top of the window stack (respecting StaysOnTopHint).
-        logging.debug(f"show_window called, flags set to: {hex(int(new_flags))}")
+        flags = Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        self.show()
+        self.activateWindow()
+        self.raise_()
 
     def hide_window(self):
         self.hide()
@@ -3819,7 +3829,30 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logging.warning(f"Could not check mouse position for auto-hide: {e}", exc_info=True)
 
-
+    def mouseMoveEvent(self, event):
+        super().mouseMoveEvent(event)
+        screen = QApplication.primaryScreen()
+        screen_geometry = screen.geometry()
+        mouse_pos = QCursor.pos()
+        
+        # 마우스가 화면 우측 끝에 있는지 확인 (예: 10픽셀 이내)
+        is_at_right_edge = abs(mouse_pos.x() - screen_geometry.right()) <= 10
+        
+        # 현재 윈도우의 위치가 우측에 있는지 확인
+        window_pos = self.pos()
+        is_window_at_right = abs(window_pos.x() - (screen_geometry.right() - self.width())) <= 10
+        
+        # 마우스가 우측 끝에 있고 윈도우도 우측에 있을 때만 최상위로 표시
+        if is_at_right_edge and is_window_at_right:
+            if not bool(self.windowFlags() & Qt.WindowStaysOnTopHint):
+                self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+                self.show()
+                self.raise_()
+        else:
+            if bool(self.windowFlags() & Qt.WindowStaysOnTopHint):
+                self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+                self.show()
+                self.raise_()
 
     def create_notepad_widget(self):
         widget = QWidget()
