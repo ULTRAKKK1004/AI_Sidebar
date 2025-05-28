@@ -82,8 +82,8 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 수정: 곱셈 연산자 사이 공백 제�
 MAGNETIC_THRESHOLD = 20
 
 # 전역 상수 정의
-DEFAULT_WEBUI_ENDPOINT = os.getenv("DEFAULT_WEBUI_ENDPOINT", "https://chat.ai-personalserv.com")
-DEFAULT_WEBUI_API_KEY = os.getenv("DEFAULT_WEBUI_API_KEY", "sk-8b155ef2e37244e299dd45cff5a88092")
+DEFAULT_WEBUI_ENDPOINT = os.getenv("DEFAULT_WEBUI_ENDPOINT", "")
+DEFAULT_WEBUI_API_KEY = os.getenv("DEFAULT_WEBUI_API_KEY", "")
 DEFAULT_WEBUI_MODEL = os.getenv("DEFAULT_WEBUI_MODEL", "gpt-4o-mini")
 Proxy_http = os.getenv("Proxy_http", "http://168.219.61.252:8080")
 Proxy_https = os.getenv("Proxy_https", "http://168.219.61.252:8080")
