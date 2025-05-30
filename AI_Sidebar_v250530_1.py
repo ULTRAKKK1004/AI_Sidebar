@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem, QMessageBox, QInputDialog, QFileDialog, QAbstractItemView,
     QSystemTrayIcon, QMenu, QDialog, QFormLayout, QDialogButtonBox,
     QGroupBox, QTabBar, QCheckBox, QComboBox, QPlainTextEdit, QProgressBar,
-    QToolButton, QSizePolicy, QTextBrowser, QFrame
+    QToolButton, QSizePolicy, QTextBrowser, QFrame, QButtonGroup, QRadioButton
 )
 from PySide6.QtCore import (
     Qt, QTimer, QSettings, QSize, QMimeData, QDir, QStandardPaths, QRect,
@@ -105,6 +105,7 @@ def setup_logging():
     except Exception as e:
         print(f"Error setting up file logging: {e}")
 
+setup_logging()
 
 # --- Markdown Highlighter Class ---
 class MarkdownHighlighter(QSyntaxHighlighter):
@@ -926,21 +927,21 @@ class AssistantWidget(QWidget):
             return
         
         self.web_search_signal.emit(query)
-        self.append_text_to_view(f"\\n**Searching the web for:** {query}\\n")
+        self.append_text_to_view(f"<br>**Searching the web for:** {query}<br>")
         self.prompt_input.clear()
 
     def perform_web_search(self, query):
         try:
             search_results = search_google(query, self.google_api_key, self.google_cx)
             if not search_results:
-                self.append_text_to_view("\\n**No search results found.**\\n")
+                self.append_text_to_view("<br>**No search results found.**<br>")
                 return
             
-            results_text = "\\n**Web Search Results:**\\n\\n"
+            results_text = "<br>**Web Search Results:**<br><br>"
             for i, result in enumerate(search_results, 1):
-                results_text += f"{i}. **{result['title']}**\\n"
-                results_text += f"   {result['link']}\\n"
-                results_text += f"   {result['snippet']}\\n\\n"
+                results_text += f"{i}. **{result['title']}**<br>"
+                results_text += f"   {result['link']}<br>"
+                results_text += f"   {result['snippet']}<br><br>"
             
             self.append_text_to_view(results_text)
             
@@ -951,7 +952,7 @@ class AssistantWidget(QWidget):
             })
         except Exception as e:
             logging.error(f"Error performing web search: {e}")
-            self.append_text_to_view(f"\\n**Error performing web search:** {str(e)}\\n")
+            self.append_text_to_view(f"<br>**Error performing web search:** {str(e)}<br>")
 
     def handle_summarize(self):
         if len(self.conversation_history) < 3:
@@ -959,7 +960,7 @@ class AssistantWidget(QWidget):
             return
         
         self.summarize_conversation_signal.emit()
-        self.append_text_to_view("\\n**Summarizing the conversation...**\\n")
+        self.append_text_to_view("<br>**Summarizing the conversation...**<br>")
 
     def send_prompt(self):
         prompt_text = self.prompt_input.text().strip()
@@ -967,7 +968,7 @@ class AssistantWidget(QWidget):
             return
         
         # 대화 뷰에 추가
-        self.append_text_to_view(f"\\n**You:** {prompt_text}\\n**Assistant:** ")
+        self.append_text_to_view(f"<br>**You:** {prompt_text}<br>**Assistant:** ")
         
         # 일반 프롬프트만 추가
         self.conversation_history.append({"role": "user", "content": prompt_text})
@@ -1049,6 +1050,20 @@ class SettingsDialog(QDialog):
         webui_group = QGroupBox("Open WebUI Assistant")
         webui_layout = QFormLayout(webui_group)
         
+        # --- 타입 선택 라디오 버튼 추가 ---
+        self.webui_type_group = QButtonGroup(self)
+        self.webui_type_radio_openwebui = QRadioButton("OpenWebUI")
+        self.webui_type_radio_ollama = QRadioButton("OpenWebUI (Ollama)")
+        self.webui_type_radio_openai = QRadioButton("OpenAI Compatible")
+        self.webui_type_group.addButton(self.webui_type_radio_openwebui, 0)
+        self.webui_type_group.addButton(self.webui_type_radio_ollama, 1)
+        self.webui_type_group.addButton(self.webui_type_radio_openai, 2)
+        radio_layout = QHBoxLayout()
+        radio_layout.addWidget(self.webui_type_radio_openwebui)
+        radio_layout.addWidget(self.webui_type_radio_ollama)
+        radio_layout.addWidget(self.webui_type_radio_openai)
+        webui_layout.addRow("API Type:", radio_layout)
+        
         self.webui_endpoint_edit = QLineEdit()
         self.webui_endpoint_edit.setPlaceholderText("http://localhost:8080")
         webui_layout.addRow("Endpoint URL:", self.webui_endpoint_edit)
@@ -1101,17 +1116,23 @@ class SettingsDialog(QDialog):
         
         self.webui_endpoint_edit.setText(self.settings.value("webui/endpoint", defaultValue=""))
         self.webui_apikey_edit.setText(self.settings.value("webui/apikey", defaultValue=""))
-        
+        # --- 타입 불러오기 ---
+        api_type = self.settings.value("webui/api_type", defaultValue="openwebui")
+        if api_type == "openwebui":
+            self.webui_type_radio_openwebui.setChecked(True)
+        elif api_type == "ollama":
+            self.webui_type_radio_ollama.setChecked(True)
+        elif api_type == "openai":
+            self.webui_type_radio_openai.setChecked(True)
+        else:
+            self.webui_type_radio_openwebui.setChecked(True)
         # 프록시 설정 로드
         self.disable_proxy_checkbox.setChecked(self.settings.value("webui/disable_proxy", defaultValue=False, type=bool))
-        
         # Google API 설정 로드
         self.google_api_key_edit.setText(self.settings.value("google/apikey", defaultValue=""))
         self.google_cx_edit.setText(self.settings.value("google/cx", defaultValue=""))
-        
         saved_models = self.settings.value("webui/available_models", defaultValue=[])
         selected_model = self.settings.value("webui/selected_model", defaultValue="")
-        
         self.webui_model_combo.clear()
         if saved_models:
             if saved_models and isinstance(saved_models[0], dict):
@@ -1124,49 +1145,76 @@ class SettingsDialog(QDialog):
         elif self.webui_endpoint_edit.text():
             QTimer.singleShot(100, self.fetch_webui_models)
 
-    def browse_notes_directory(self):
-        current_dir = self.notes_dir_edit.text()
-        new_dir = QFileDialog.getExistingDirectory(self, "Select Notes Directory", current_dir)
-        if new_dir and new_dir != current_dir:
-            self.notes_dir_edit.setText(new_dir)
-
     def fetch_webui_models(self):
         endpoint = self.webui_endpoint_edit.text().strip()
         api_key = self.webui_apikey_edit.text().strip()
-        
+        # --- 타입 가져오기 ---
+        if self.webui_type_radio_openwebui.isChecked():
+            api_type = "openwebui"
+        elif self.webui_type_radio_ollama.isChecked():
+            api_type = "ollama"
+        elif self.webui_type_radio_openai.isChecked():
+            api_type = "openai"
+        else:
+            api_type = "openwebui"
         if not endpoint:
             QMessageBox.warning(self, "Missing Endpoint", "Please enter the Open WebUI Endpoint URL.")
             return
-
         models = []
         if not endpoint.endswith("/"):
             endpoint += "/"
-        url = endpoint + "api/models"
-        
-        headers = {"Accept": "application/json"}
+        # --- API별 모델 리스트 엔드포인트 분기 ---
+        if api_type == "openwebui":
+            url = endpoint + "api/models"
+        elif api_type == "ollama":
+            url = endpoint + "ollama/api/tags"
+        elif api_type == "openai":
+            url = endpoint + "v1/models"
+        else:
+            url = endpoint + "api/models"
+        headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        
-        # 프록시 설정 가져오기
         proxy_disabled = self.disable_proxy_checkbox.isChecked()     
-        
         try:
             logging.info(f"Fetching models from {url}")
             if not proxy_disabled:
-                response = requests.get(url, headers=headers, timeout=10, verify=False, proxies={"http": Proxy_http, "https": Proxy_https})
+                response = requests.get(url, headers=headers, verify=False, proxies={"http": Proxy_http, "https": Proxy_https})
             else:
-                response = requests.get(url, headers=headers, timeout=10)
+                response = requests.get(url, headers=headers)
             response.raise_for_status()
             res_text = response.content.decode("utf-8")
             result = json.loads(res_text)
-            
-            if isinstance(result, list):
-                for model in result:
-                    if isinstance(model, dict) and "id" in model:
-                        models.append({"id": model.get("id", ""), "name": model.get("name", model.get("id", ""))})
-                    elif isinstance(model, str):
-                        models.append({"id": model, "name": model})
-            
+            # --- API별 모델 파싱 ---
+            if api_type == "openwebui":
+                if isinstance(result, list):
+                    for model in result:
+                        if isinstance(model, dict) and "id" in model:
+                            models.append({"id": model.get("id", ""), "name": model.get("name", model.get("id", ""))})
+                        elif isinstance(model, str):
+                            models.append({"id": model, "name": model})
+                elif result:
+                    if 'data' in result.keys():
+                        for model in result['data']:
+                            if isinstance(model, dict) and "id" in model:
+                                models.append({"id": model.get("id", ""), "name": model.get("name", model.get("id", ""))})
+                            elif isinstance(model, str):
+                                models.append({"id": model, "name": model})
+            elif api_type == "ollama":
+                # Ollama: 태그 리스트에서 name만 추출
+                if isinstance(result, dict) and "models" in result:
+                    for model in result["models"]:
+                        if isinstance(model, dict) and "name" in model:
+                            models.append({"id": model["name"], "name": model["name"]})
+                elif isinstance(result, list):
+                    for model in result:
+                        if isinstance(model, dict) and "name" in model:
+                            models.append({"id": model["name"], "name": model["name"]})
+            elif api_type == "openai":
+                if isinstance(result, dict) and "data" in result:
+                    for model in result["data"]:
+                        if isinstance(model, dict) and "id" in model:
+                            models.append({"id": model["id"], "name": model["id"]})
             if models:
                 current_selection = self.webui_model_combo.currentText()
                 self.webui_model_combo.clear()
@@ -1182,7 +1230,6 @@ class SettingsDialog(QDialog):
                 self.webui_model_combo.clear()
                 QMessageBox.warning(self, "No Models", "No models found at the specified endpoint.")
                 self.settings.setValue("webui/available_models", [])
-                
         except Exception as e:
             QMessageBox.critical(self, "Fetch Error", f"Failed to fetch models: {e}")
             self.webui_model_combo.clear()
@@ -1193,16 +1240,29 @@ class SettingsDialog(QDialog):
         self.settings.setValue("webui/endpoint", self.webui_endpoint_edit.text().strip())
         self.settings.setValue("webui/apikey", self.webui_apikey_edit.text().strip())
         self.settings.setValue("webui/selected_model", self.webui_model_combo.currentText())
-        
+        # --- 타입 저장 ---
+        if self.webui_type_radio_openwebui.isChecked():
+            api_type = "openwebui"
+        elif self.webui_type_radio_ollama.isChecked():
+            api_type = "ollama"
+        elif self.webui_type_radio_openai.isChecked():
+            api_type = "openai"
+        else:
+            api_type = "openwebui"
+        self.settings.setValue("webui/api_type", api_type)
         # 프록시 설정 저장
         self.settings.setValue("webui/disable_proxy", self.disable_proxy_checkbox.isChecked())
-        
         # Google API 설정 저장
         self.settings.setValue("google/apikey", self.google_api_key_edit.text().strip())
         self.settings.setValue("google/cx", self.google_cx_edit.text().strip())
-        
         self.settings_updated_signal.emit()
         self.accept()
+
+    def browse_notes_directory(self):
+        current_dir = self.notes_dir_edit.text()
+        new_dir = QFileDialog.getExistingDirectory(self, "Select Notes Directory", current_dir)
+        if new_dir and new_dir != current_dir:
+            self.notes_dir_edit.setText(new_dir)
 
 # --- WebUI Worker ---
 class WebUIWorker(QObject):
@@ -1212,7 +1272,7 @@ class WebUIWorker(QObject):
     stream_chunk = Signal(str)
     stream_finished = Signal()
 
-    def __init__(self, endpoint, api_key, model=None, messages=None, proxy_disabled=True):
+    def __init__(self, endpoint, api_key, model=None, messages=None, proxy_disabled=True, api_type="openwebui"):
         super().__init__()
         self.endpoint = endpoint
         self.api_key = api_key
@@ -1220,6 +1280,7 @@ class WebUIWorker(QObject):
         self.messages = messages if messages else []
         self._running = True
         self.proxy_disabled = proxy_disabled
+        self.api_type = api_type
 
     @Slot()
     def run_chat_stream(self):
@@ -1227,17 +1288,23 @@ class WebUIWorker(QObject):
             self.error.emit("Missing endpoint, model, or messages for chat.")
             self.finished.emit()
             return
-
-        url = self.endpoint.rstrip("/") + "/api/chat/completions"
+        endpoint = self.endpoint.rstrip("/") + "/"
+        # --- API별 chat completions 엔드포인트 분기 ---
+        if self.api_type == "openwebui":
+            url = endpoint + "api/chat/completions"
+        elif self.api_type == "ollama":
+            url = endpoint + "ollama/api/chat"
+        elif self.api_type == "openai":
+            url = endpoint + "v1/chat/completions"
+        else:
+            url = endpoint + "api/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-
+        # --- Ollama는 messages 포맷이 다를 수 있음(여기선 기존 포맷 유지, 필요시 추가 분기) ---
         payload = {"model": self.model, "messages": self.messages, "stream": True}
-
         try:
-            logging.info(f"Worker sending chat request with {len(self.messages)} messages.")
-            # 프록시 설정에 따라 요청
+            logging.info(f"Worker sending chat request with {len(self.messages)} messages. API type: {self.api_type}")
             if not self.proxy_disabled:
                 with requests.post(url, headers=headers, json=payload, stream=True, timeout=300, verify=False, proxies={"http": Proxy_http, "https": Proxy_https}) as response:
                     self._process_stream_response(response)
@@ -1249,7 +1316,7 @@ class WebUIWorker(QObject):
         except requests.exceptions.RequestException as e:
             error_detail = response.text if 'response' in locals() else "Unknown error"
             logging.error(f"Network error during chat: {e}. Details: {error_detail}")
-            self.error.emit(f"Network error: {e}\\n{error_detail[:200]}")
+            self.error.emit(f"Network error: {e}\n{error_detail[:200]}")
         except Exception as e:
             logging.error(f"Unexpected error during chat: {e}", exc_info=True)
             self.error.emit(f"Unexpected error: {e}")
@@ -1450,6 +1517,9 @@ class MainWindow(QMainWindow):
         if current_always_on_top != saved_always_on_top:
             self.toggle_always_on_top(saved_always_on_top, save_setting=False)
 
+        # MainWindow.load_settings 내부에 추가
+        self.webui_api_type = self.settings.value("webui/api_type", defaultValue="openwebui")
+
     @Slot()
     def settings_updated(self):
         logging.info("Settings updated, reloading configuration...")
@@ -1596,14 +1666,13 @@ class MainWindow(QMainWindow):
 
     @Slot(str, str, str, list)
     def start_webui_chat_worker(self, endpoint, api_key, model, messages):
+        api_type = getattr(self, 'webui_api_type', 'openwebui')
         if self.webui_worker and self.webui_thread.isRunning():
             logging.warning("Stopping lingering WebUI worker before starting new one.")
             self.webui_worker.stop()
             self.webui_thread.quit()
             self.webui_thread.wait(500)
-        
-        # 프록시 설정을 포함하여 Worker 생성
-        self.webui_worker = WebUIWorker(endpoint, api_key, model, messages, self.proxy_disabled)
+        self.webui_worker = WebUIWorker(endpoint, api_key, model, messages, self.proxy_disabled, api_type)
         self.webui_worker.moveToThread(self.webui_thread)
         
         try:
