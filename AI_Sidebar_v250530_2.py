@@ -962,10 +962,44 @@ class AssistantWidget(QWidget):
         self.summarize_conversation_signal.emit()
         self.append_text_to_view("<br>**Summarizing the conversation...**<br>")
 
+    def process_youtube_links(self, text):
+        # YouTube 링크 감지 및 처리
+        youtube_pattern = r"(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})"
+        youtube_matches = re.findall(youtube_pattern, text)
+        
+        if youtube_matches:
+            for video_id in youtube_matches:
+                try:
+                    self.append_text_to_view(f"\n**Processing YouTube video transcript:** https://youtube.com/watch?v={video_id}\n")
+                    if self.proxy_disabled:
+                        transcript = get_youtube_transcript(video_id)
+                    else:
+                        transcript = get_youtube_transcript(video_id,proxy_disabled=self.proxy_disabled,Proxy_http=self.Proxy_http,Proxy_https=self.Proxy_https)
+                    
+                    
+                    # 트랜스크립트를 대화 히스토리에 추가
+                    self.conversation_history.append({
+                        "role": "system",
+                        "content": f"Transcript from YouTube video (ID: {video_id}): {transcript}"
+                    })
+                    
+                    self.append_text_to_view(f"\n**YouTube transcript extracted.** Length: {len(transcript)} characters.\n")
+                    
+                except Exception as e:
+                    logging.error(f"Error processing YouTube transcript: {e}")
+                    self.append_text_to_view(f"\n**Error extracting YouTube transcript:** {str(e)}\n")
+            
+            return True
+        
+        return False
+
     def send_prompt(self):
         prompt_text = self.prompt_input.text().strip()
         if not prompt_text:
             return
+        
+        # YouTube 링크 처리
+        has_youtube = self.process_youtube_links(prompt_text)
         
         # 대화 뷰에 추가
         self.append_text_to_view(f"<br>**You:** {prompt_text}<br>**Assistant:** ")
