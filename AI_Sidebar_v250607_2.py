@@ -735,32 +735,49 @@ class EnhancedAssistantWidget(QTextBrowser):
 # --- YouTube Transcript Helper ---
 def get_youtube_transcript(video_id, **kwargs):
     proxy_disabled = kwargs.get("proxy_disabled", True)
-    if proxy_disabled:
-        try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=("ko",))
-            return " ".join([item['text'] for item in transcript_list])
-        except Exception as e:
-            logging.error(f"Error fetching YouTube transcript: {e}")
+    from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound
+    from xml.etree.ElementTree import ParseError
+    tr = ''
+    for _ in range(5):
+        if proxy_disabled:
             try:
-                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=("en",))
-                return " ".join([item['text'] for item in transcript_list])
-            except Exception as e:
-                logging.error(f"Error fetching YouTube transcript: {e}")
-                return f"Error fetching transcript: {str(e)}"
-    else:
-        Proxy_http = kwargs.get("Proxy_http", "http://168.219.61.252:8080")
-        Proxy_https = kwargs.get("Proxy_https", "http://168.219.61.252:8080")
-        try:
-            transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=("ko",), proxies={"http": Proxy_http, "https": Proxy_https}, verify=False)
-            return " ".join([item['text'] for item in transcript_list])
-        except Exception as e:
-            logging.error(f"Error fetching YouTube transcript: {e}")
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                # 수동 자막 우선
+                try:
+                    target = transcript_list.find_manually_created_transcript(['ko','en'])
+                except NoTranscriptFound:
+                    target = transcript_list.find_generated_transcript(['ko','en'])
+                data = target.fetch()
+            except NoTranscriptFound:
+                print("지원 가능한 자막이 없습니다.")
+            except ParseError:
+                print("fetch 중 빈 XML - 자막이 없거나 네트워크 오류")
+            else:
+                for snippet in data:
+                    tr += snippet.text
+                
+        else:
+            Proxy_http = kwargs.get("Proxy_http", "http://168.219.61.252:8080")
+            Proxy_https = kwargs.get("Proxy_https", "http://168.219.61.252:8080")
+
             try:
-                transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=("en",), proxies={"http": Proxy_http, "https": Proxy_https}, verify=False)
-                return " ".join([item['text'] for item in transcript_list])
-            except Exception as e:
-                logging.error(f"Error fetching YouTube transcript: {e}")
-                return f"Error fetching transcript: {str(e)}"
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id,proxies={"http": Proxy_http, "https": Proxy_https})
+                # 수동 자막 우선
+                try:
+                    target = transcript_list.find_manually_created_transcript(['ko','en'],proxies={"http": Proxy_http, "https": Proxy_https})
+                except NoTranscriptFound:
+                    target = transcript_list.find_generated_transcript(['ko','en'],proxies={"http": Proxy_http, "https": Proxy_https})
+                data = target.fetch()
+            except NoTranscriptFound:
+                print("지원 가능한 자막이 없습니다.")
+            except ParseError:
+                print("fetch 중 빈 XML - 자막이 없거나 네트워크 오류")
+            else:
+                for snippet in data:
+                    tr += snippet.text
+        if len(tr) > 10:
+            return tr
+
 
 # --- Google Search Helper ---
 def search_google(query, api_key, cx):

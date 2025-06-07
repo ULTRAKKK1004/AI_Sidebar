@@ -5,7 +5,7 @@ block_cipher = None
 
 
 a = Analysis(
-    ['AI_Sidebar_v250530_1.py'],
+    ['AI_Sidebar_v250607_1.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -28,7 +28,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='AI_Sidebar_v250530_1',
+    name='AI_Sidebar_v250607_1',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
